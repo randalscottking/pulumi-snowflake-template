@@ -74,6 +74,151 @@ pulumi preview
 pulumi up
 ```
 
+## Service Account Setup (Recommended for Production)
+
+For automated deployments and CI/CD pipelines, use a service account with key pair authentication instead of personal credentials.
+
+### Option 1: Key Pair Authentication (Most Secure)
+
+**Step 1: Generate Key Pair**
+
+```bash
+# Generate private key
+openssl genrsa 2048 | openssl pkcs8 -topk8 -inform PEM -out rsa_key.p8 -nocrypt
+
+# Generate public key from private key
+openssl rsa -in rsa_key.p8 -pubout -out rsa_key.pub
+```
+
+**Step 2: Create Service Account in Snowflake**
+
+```sql
+-- Extract the public key (remove header/footer and concatenate lines)
+-- Then create the service account
+CREATE USER svc_pulumi_deployer
+  COMMENT = 'Service account for Pulumi infrastructure deployment'
+  DEFAULT_ROLE = SYSADMIN
+  DEFAULT_WAREHOUSE = ADMIN_WH
+  RSA_PUBLIC_KEY = 'MIIBIjANBgkqh...';  -- Paste your public key content here
+
+-- Grant necessary role
+GRANT ROLE SYSADMIN TO USER svc_pulumi_deployer;
+
+-- Grant additional privileges if needed
+GRANT CREATE DATABASE ON ACCOUNT TO ROLE SYSADMIN;
+GRANT CREATE WAREHOUSE ON ACCOUNT TO ROLE SYSADMIN;
+GRANT CREATE USER ON ACCOUNT TO ROLE SYSADMIN;
+```
+
+**Step 3: Configure Pulumi with Key Pair**
+
+```bash
+# Set Snowflake account
+pulumi config set snowflake:account xy12345.us-east-1
+
+# Set service account user
+pulumi config set snowflake:user svc_pulumi_deployer
+
+# Set authentication method to JWT (key pair)
+pulumi config set snowflake:authenticator JWT
+
+# Option A: Set private key content directly (recommended for CI/CD)
+pulumi config set --secret snowflake:privateKey "$(cat rsa_key.p8)"
+
+# Option B: Set path to private key file (recommended for local development)
+pulumi config set snowflake:privateKeyPath /path/to/rsa_key.p8
+
+# Set role
+pulumi config set snowflake:role SYSADMIN
+
+# Set environment
+pulumi config set environment dev
+```
+
+### Option 2: Password Authentication (Less Secure)
+
+For non-production or development environments, you can use password authentication:
+
+```sql
+-- Create service account with password
+CREATE USER svc_pulumi_deployer
+  COMMENT = 'Service account for Pulumi development'
+  PASSWORD = 'SecureRandomPassword123!'
+  DEFAULT_ROLE = SYSADMIN
+  DEFAULT_WAREHOUSE = ADMIN_WH
+  MUST_CHANGE_PASSWORD = FALSE;
+
+-- Grant role
+GRANT ROLE SYSADMIN TO USER svc_pulumi_deployer;
+```
+
+Configure Pulumi:
+
+```bash
+pulumi config set snowflake:account xy12345.us-east-1
+pulumi config set snowflake:user svc_pulumi_deployer
+pulumi config set --secret snowflake:password SecureRandomPassword123!
+pulumi config set snowflake:role SYSADMIN
+pulumi config set environment dev
+```
+
+### Service Account Best Practices
+
+1. **Use Key Pair Authentication** - Always prefer key pairs over passwords for service accounts
+2. **Least Privilege** - Use SYSADMIN role instead of ACCOUNTADMIN when possible
+3. **Separate Accounts** - Create different service accounts for different purposes:
+   - `svc_pulumi_dev` - Development deployments
+   - `svc_pulumi_prod` - Production deployments
+   - `svc_ci_cd` - CI/CD pipeline deployments
+4. **Key Rotation** - Rotate private keys every 90-180 days
+5. **Secure Storage** - Store private keys in secure vaults (AWS Secrets Manager, Azure Key Vault, HashiCorp Vault)
+6. **Audit Logging** - Regularly review service account activity in Snowflake
+7. **No Interactive Login** - Service accounts should never be used for interactive sessions
+
+### CI/CD Integration Example
+
+For GitHub Actions:
+
+```yaml
+# .github/workflows/deploy.yml
+name: Deploy Snowflake Infrastructure
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.9'
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Configure Pulumi
+        run: |
+          pulumi login --local
+          pulumi stack select prod
+        env:
+          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
+      
+      - name: Deploy with Service Account
+        run: pulumi up --yes
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: svc_pulumi_deployer
+          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+          SNOWFLAKE_ROLE: SYSADMIN
+          SNOWFLAKE_AUTHENTICATOR: JWT
+```
+
 ## Project Structure
 
 ```
@@ -278,13 +423,24 @@ pulumi config set environment dev
 
 ## Configuration Reference
 
-### Required Configuration
+### Required Configuration (Password Authentication)
 
 ```bash
 snowflake:account      # Snowflake account identifier
-snowflake:user         # Admin user for authentication
+snowflake:user         # User for authentication
 snowflake:password     # User password (use --secret)
 snowflake:role         # Role to assume (ACCOUNTADMIN or SYSADMIN)
+```
+
+### Required Configuration (Key Pair Authentication - Recommended)
+
+```bash
+snowflake:account        # Snowflake account identifier
+snowflake:user           # Service account user
+snowflake:authenticator  # Set to "JWT" for key pair auth
+snowflake:privateKey     # Private key content (use --secret), OR
+snowflake:privateKeyPath # Path to private key file
+snowflake:role          # Role to assume (typically SYSADMIN)
 ```
 
 ### Optional Configuration
