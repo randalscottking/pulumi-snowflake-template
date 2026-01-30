@@ -1,0 +1,30 @@
+name: snowflake-infrastructure
+runtime: python
+description: Infrastructure as Code template for managing Snowflake resources with Pulumi
+
+config:
+  snowflake:account:
+    description: Snowflake account identifier (e.g., xy12345.us-east-1 or myorg-myaccount)
+  snowflake:user:
+    description: Snowflake user for authentication (personal user or service account)
+  snowflake:password:
+    description: Snowflake password for password authentication (use pulumi config set --secret)
+    secret: true
+  snowflake:authenticator:
+    description: Authentication method (JWT for key pair, default for password)
+    default: ""
+  snowflake:privateKey:
+    description: Private key content for JWT authentication (use pulumi config set --secret)
+    secret: true
+  snowflake:privateKeyPath:
+    description: Path to private key file for JWT authentication (alternative to privateKey)
+    default: ""
+  snowflake:role:
+    description: Snowflake role to use (ACCOUNTADMIN, SYSADMIN, etc.)
+    default: SYSADMIN
+  snowflake:region:
+    description: Snowflake region
+    default: us-east-1
+  environment:
+    description: Environment name (dev, staging, prod)
+    default: dev
